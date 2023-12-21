@@ -1,14 +1,7 @@
 /* Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: GPL-2.0-only
+*/
 #include <linux/slab.h>
 #include <linux/debugfs.h>
 #include <linux/kernel.h>
@@ -6851,6 +6844,14 @@ static int afe_sidetone_iir(u16 tx_port_id)
 		pr_debug("%s: adding 2 to size:%d\n", __func__, size);
 		size = size + 2;
 	}
+
+	if (size > MAX_SIDETONE_IIR_DATA_SIZE) {
+		pr_err("%s: iir_config size is out of bounds:%d\n", __func__, size);
+		mutex_unlock(&this_afe.cal_data[cal_index]->lock);
+		ret = -EINVAL;
+		goto done;
+	}
+
 	memcpy(&filter_data.iir_config, &st_iir_cal_info->iir_config, size);
 	mutex_unlock(&this_afe.cal_data[cal_index]->lock);
 
@@ -8057,6 +8058,7 @@ int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib_resp)
 	struct param_hdr_v3 param_hdr;
 	int port = SLIMBUS_4_TX;
 	int ret = -EINVAL;
+	uint32_t th_vi_ca_state;
 
 	if (!calib_resp) {
 		pr_err("%s: Invalid params\n", __func__);
@@ -8076,6 +8078,12 @@ int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib_resp)
 	if (ret < 0) {
 		pr_err("%s: get param port 0x%x param id[0x%x]failed %d\n",
 		       __func__, port, param_hdr.param_id, ret);
+		goto get_params_fail;
+	}
+	th_vi_ca_state = this_afe.calib_data.res_cfg.th_vi_ca_state;
+	if (th_vi_ca_state < FBSP_INCORRECT_OP_MODE ||
+		th_vi_ca_state > MAX_FBSP_STATE) {
+		pr_err("%s: invalid fbsp state %d\n", __func__, th_vi_ca_state);
 		goto get_params_fail;
 	}
 	memcpy(&calib_resp->res_cfg, &this_afe.calib_data.res_cfg,
@@ -8420,6 +8428,9 @@ static int afe_set_cal_sp_th_vi_cfg(int32_t cal_type, size_t data_size,
 
 	if (cal_data == NULL ||
 	    data_size > sizeof(*cal_data) ||
+	    (data_size < sizeof(cal_data->cal_hdr) +
+		sizeof(cal_data->cal_data) +
+		sizeof(cal_data->cal_info.mode)) ||
 	    this_afe.cal_data[AFE_FB_SPKR_PROT_TH_VI_CAL] == NULL)
 		goto done;
 
@@ -8564,7 +8575,9 @@ static int afe_get_cal_sp_th_vi_param(int32_t cal_type, size_t data_size,
 
 	if (cal_data == NULL ||
 	    data_size > sizeof(*cal_data) ||
-	    data_size < sizeof(cal_data->cal_hdr) ||
+	    (data_size < sizeof(cal_data->cal_hdr) +
+		sizeof(cal_data->cal_data) +
+		sizeof(cal_data->cal_info.mode)) ||
 	    this_afe.cal_data[AFE_FB_SPKR_PROT_TH_VI_CAL] == NULL)
 		return 0;
 
@@ -8591,8 +8604,7 @@ static int afe_get_cal_sp_ex_vi_ftm_param(int32_t cal_type, size_t data_size,
 	pr_debug("%s: cal_type = %d\n", __func__, cal_type);
 	if (this_afe.cal_data[AFE_FB_SPKR_PROT_EX_VI_CAL] == NULL ||
 	    cal_data == NULL ||
-	    data_size > sizeof(*cal_data) ||
-	    data_size < sizeof(cal_data->cal_hdr))
+	    data_size != sizeof(*cal_data))
 		goto done;
 
 	mutex_lock(&this_afe.cal_data[AFE_FB_SPKR_PROT_EX_VI_CAL]->lock);
